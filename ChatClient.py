@@ -2,6 +2,7 @@ import socket
 import json
 import sys
 import threading
+import argparse
 from datetime import datetime
 
 BUFFER_SIZE = 4096
@@ -12,26 +13,70 @@ MSGS_RCV = 0
 
 
 def parse_arguments():
-    """Parses command-line arguments according to assignment requirements."""
-    if len(sys.argv) != 5:
-        print(f"ERR - arg count (expected 4, got {len(sys.argv)-1})")
+    """Parses command-line arguments using argparse."""
+    if len(sys.argv) == 1:
+        parser = create_parser()
+        parser.print_help()
         sys.exit(1)
 
-    hostname = sys.argv[1]
+    parser = create_parser()
 
     try:
-        port = int(sys.argv[2])
-        if port <= 0 or port >= 65536:
+        args = parser.parse_args()
+
+        # Additional validation for port range
+        if args.port <= 0 or args.port >= 65536:
             print(f"ERR - arg 2")
             sys.exit(1)
-    except ValueError:
-        print(f"ERR - arg 2")
+
+        return args.hostname, args.port, args.nickname, args.client_id
+    except SystemExit:
         sys.exit(1)
 
-    nickname = sys.argv[3]
-    client_id = sys.argv[4]
 
-    return hostname, port, nickname, client_id
+def create_parser():
+    """Creates and configures the argument parser."""
+    parser = argparse.ArgumentParser(
+        description="Chat Client Application that connects to a TCP chat server",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("hostname", help="Hostname or IP address of the chat server")
+    parser.add_argument(
+        "port", type=int, help="Port number the server is running on (1-65535)"
+    )
+    parser.add_argument("nickname", help="Unique identifier for the user in the chat")
+    parser.add_argument("client_id", help="Unique identifier for the client session")
+
+    # Example usage
+    parser.epilog = "Example: python ChatClient.py localhost 12345 Alice 001"
+
+    # Custom error handler to match the required format
+    def error_handler(message):
+        if "--help" in sys.argv or "-h" in sys.argv:
+            # Let the help message display normally
+            parser.print_help()
+            sys.exit(0)
+
+        if "required" in message:
+            print(f"ERR - arg count (expected 4, got {len(sys.argv)-1})")
+        elif "port" in message:
+            print(f"ERR - arg 2")
+        else:
+            arg_num = 1  # Default
+            if "hostname" in message:
+                arg_num = 1
+            elif "port" in message:
+                arg_num = 2
+            elif "nickname" in message:
+                arg_num = 3
+            elif "client_id" in message:
+                arg_num = 4
+            print(f"ERR - arg {arg_num}")
+        sys.exit(1)
+
+    parser.error = error_handler
+
+    return parser
 
 
 def create_timestamp():
@@ -43,9 +88,6 @@ def send_message(sock, data):
         message_json = json.dumps(data)
         sock.sendall(message_json.encode("utf-8"))
         return True
-    except (BrokenPipeError, ConnectionResetError) as e:
-        print(f"ERR - {e}")
-        return False
     except Exception as e:
         print(f"ERR - {e}")
         return False
@@ -61,22 +103,12 @@ def receive_message(sock):
             return None
 
         resp_str = resp_bytes.decode("utf-8")
-        try:
-            resp_data = json.loads(resp_str)
-            return resp_data
-        except json.JSONDecodeError as e:
-            print(f"ERR - {e}")
-            return {"type": "error", "message": "Invalid JSON received from server"}
-
-    except ConnectionResetError as e:
+        resp_data = json.loads(resp_str)
+        return resp_data
+    except json.JSONDecodeError as e:
+        # Keep this specific exception for better error reporting
         print(f"ERR - {e}")
-        return None
-    except OSError as e:
-        if e.errno == 9:  # Bad file descriptor (socket closed)
-            return None
-        else:
-            print(f"ERR - {e}")
-            return None
+        return {"type": "error", "message": "Invalid JSON received from server"}
     except Exception as e:
         print(f"ERR - {e}")
         return None
@@ -215,15 +247,6 @@ def run_client(host, port, nickname, client_id):
                         shutdown_event.set()
                     break
 
-    except socket.gaierror as e:
-        print(f"ERR - {e}")
-        shutdown_event.set()
-    except ConnectionRefusedError as e:
-        print(f"ERR - {e}")
-        shutdown_event.set()
-    except socket.timeout as e:
-        print(f"ERR - {e}")
-        shutdown_event.set()
     except Exception as e:
         print(f"ERR - {e}")
         shutdown_event.set()
